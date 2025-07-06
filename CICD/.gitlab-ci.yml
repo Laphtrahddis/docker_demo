@@ -1,0 +1,54 @@
+# Define pipeline stages in order
+stages:
+  - validate     # Checks if Terraform code is syntactically correct
+  - plan         # Generates an execution plan
+  - apply        # Applies the infrastructure changes
+  - destroy      # Destroys provisioned infrastructure (manual trigger)
+
+# Use official Terraform Docker image for GitLab Runner
+image:
+  name: hashicorp/terraform:light
+  entrypoint:     # Override default entrypoint to ensure correct PATH
+    - '/usr/bin/env'
+    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+# Commands to run before each job
+before_script:
+  - export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}         # Set AWS credentials (from GitLab variables)
+  - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+  - rm -rf .terraform                                     # Ensure fresh init
+  - terraform --version                                   # Output Terraform version
+  - terraform init                                        # Initialize Terraform
+
+# Validate job - syntax checks
+validate:
+  stage: validate
+  script:
+    - terraform validate                                  # Checks correctness of Terraform files
+
+# Plan job - show what will be created/changed/destroyed
+plan:
+  stage: plan
+  script:
+    - terraform plan -out=tfplan                          # Save plan to file
+  artifacts:
+    paths:
+      - tfplan                                            # Make plan file available to next job
+
+# Apply job - provision infrastructure
+apply:
+  stage: apply
+  script:
+    - terraform apply -auto-approve tfplan                # Apply changes using saved plan
+  dependencies:
+    - plan                                                # Only run if "plan" was successful
+
+# Destroy job - clean-up (must be manually triggered)
+destroy:
+  stage: destroy
+  script:
+    - terraform init
+    - terraform destroy -auto-approve                     # Tear down infrastructure
+  when: manual                                            # Prevent automatic execution
+  dependencies:
+    - apply                                               # Only allow destroy after successful apply
